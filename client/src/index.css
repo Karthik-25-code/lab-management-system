@@ -54,35 +54,12 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground min-h-screen relative overflow-x-hidden;
+    @apply bg-background text-foreground min-h-screen overflow-x-hidden;
+    background-image: 
+      radial-gradient(circle at 50% 0%, hsl(var(--primary) / 0.08) 0%, transparent 50%),
+      linear-gradient(to right, hsl(var(--foreground) / 0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--foreground) / 0.03) 1px, transparent 1px);
+    background-size: 100% 100%, 30px 30px, 30px 30px;
+    background-attachment: fixed;
   }
-  
-  body::before {
-    content: '';
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: radial-gradient(circle at 50% 0%, hsl(var(--primary) / 0.1) 0%, transparent 50%),
-                radial-gradient(circle at 0% 100%, hsl(var(--primary) / 0.05) 0%, transparent 50%),
-                radial-gradient(circle at 100% 100%, hsl(var(--primary) / 0.05) 0%, transparent 50%);
-    z-index: -2;
-    animation: pulseBg 15s ease-in-out infinite alternate;
-  }
-  
-  body::after {
-    content: '';
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background-image: linear-gradient(hsl(var(--foreground) / 0.03) 1px, transparent 1px),
-                      linear-gradient(90deg, hsl(var(--foreground) / 0.03) 1px, transparent 1px);
-    background-size: 30px 30px;
-    z-index: -1;
-    pointer-events: none;
-    mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
-    -webkit-mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
-  }
-}
-
-@keyframes pulseBg {
-  0% { transform: scale(1); opacity: 0.8; }
-  100% { transform: scale(1.1); opacity: 1; }
 }

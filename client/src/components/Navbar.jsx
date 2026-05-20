@@ -1,5 +1,6 @@
+import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { BeakerIcon, ShoppingCart, LogOut, Package } from 'lucide-react';
+import { BeakerIcon, ShoppingCart, LogOut, Package, Menu } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useAppContext } from '../context/AppContext';
@@ -14,6 +15,7 @@ export default function Navbar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout, cart, setIsCartOpen } = useAppContext();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleLogout = () => {
     logout();
@@ -33,7 +35,8 @@ export default function Navbar() {
         </div>
         
         {user && (
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2 sm:gap-6">
+            {/* Desktop Navigation */}
             <div className="hidden md:flex items-center gap-4">
               {user.role === 'admin' ? (
                 <Link
@@ -78,12 +81,19 @@ export default function Navbar() {
               )}
             </div>
 
-            <div className="flex items-center gap-3 pl-4 border-l border-white/20">
+            <div className="flex items-center gap-1 sm:gap-3 pl-2 sm:pl-4 border-l border-white/20">
+              {/* Mobile Menu Toggle */}
+              <div className="md:hidden flex items-center mr-1">
+                <Button variant="ghost" size="icon" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
+                  <Menu className="h-5 w-5" />
+                </Button>
+              </div>
+
               {user.role === 'student' && (
                 <Button 
                   variant="outline" 
                   size="icon" 
-                  className="relative rounded-full"
+                  className="relative rounded-full h-9 w-9 sm:h-10 sm:w-10"
                   onClick={() => setIsCartOpen(true)}
                 >
                   <ShoppingCart className="h-4 w-4" />
@@ -107,6 +117,45 @@ export default function Navbar() {
           </div>
         )}
       </div>
+
+      {/* Mobile Menu Dropdown */}
+      {mobileMenuOpen && user && (
+        <div className="md:hidden absolute top-16 left-0 right-0 border-b border-white/10 bg-background/95 backdrop-blur-xl p-4 flex flex-col gap-4 shadow-lg animate-in slide-in-from-top-2">
+          {user.role === 'admin' ? (
+            <Link
+              to="/admin"
+              onClick={() => setMobileMenuOpen(false)}
+              className={cn("p-2 rounded-md hover:bg-muted font-medium", location.pathname === '/admin' ? "text-primary bg-muted/50" : "text-muted-foreground")}
+            >
+              Admin Dashboard
+            </Link>
+          ) : (
+            <>
+              <Link
+                to="/"
+                onClick={() => setMobileMenuOpen(false)}
+                className={cn("p-2 rounded-md hover:bg-muted font-medium", location.pathname === '/' ? "text-primary bg-muted/50" : "text-muted-foreground")}
+              >
+                Catalog
+              </Link>
+              <Link
+                to="/lectures"
+                onClick={() => setMobileMenuOpen(false)}
+                className={cn("p-2 rounded-md hover:bg-muted font-medium", location.pathname === '/lectures' ? "text-primary bg-muted/50" : "text-muted-foreground")}
+              >
+                Lectures
+              </Link>
+              <Link
+                to="/rentals"
+                onClick={() => setMobileMenuOpen(false)}
+                className={cn("p-2 rounded-md hover:bg-muted font-medium flex items-center gap-2", location.pathname === '/rentals' ? "text-primary bg-muted/50" : "text-muted-foreground")}
+              >
+                <Package className="h-4 w-4" /> My Rentals
+              </Link>
+            </>
+          )}
+        </div>
+      )}
     </nav>
   );
 }
