@@ -11,20 +11,28 @@ export function AppProvider({ children }) {
   // Load user from local storage on mount
   useEffect(() => {
     const storedUser = localStorage.getItem('lab_user');
-    if (storedUser) {
+    const storedToken = localStorage.getItem('lab_token');
+    if (storedUser && storedToken) {
       setUser(JSON.parse(storedUser));
     }
   }, []);
 
-  const login = (userData) => {
-    setUser(userData);
-    localStorage.setItem('lab_user', JSON.stringify(userData));
+  const login = (authData) => {
+    if (authData && authData.token) {
+      setUser(authData.user);
+      localStorage.setItem('lab_user', JSON.stringify(authData.user));
+      localStorage.setItem('lab_token', authData.token);
+    } else if (authData) {
+      setUser(authData);
+      localStorage.setItem('lab_user', JSON.stringify(authData));
+    }
   };
 
   const logout = () => {
     setUser(null);
     setCart([]);
     localStorage.removeItem('lab_user');
+    localStorage.removeItem('lab_token');
   };
 
   const addToCart = (item, quantity, hours) => {

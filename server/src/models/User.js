@@ -41,6 +41,12 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    completedLectures: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Lecture',
+      },
+    ],
   },
   {
     timestamps: true,

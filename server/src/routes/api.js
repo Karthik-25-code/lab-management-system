@@ -1,11 +1,19 @@
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
 const Component = require('../models/Component');
 const RentalTransaction = require('../models/RentalTransaction');
 const Lecture = require('../models/Lecture');
 const User = require('../models/User');
+const { protect, restrictTo } = require('../middleware/auth');
 
-// Simple Login (No JWT for simplicity as requested, just returning user)
+const signToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET || 'labmgmt_super_secret_key_2024_change_in_production', {
+    expiresIn: process.env.JWT_EXPIRES_IN || '7d'
+  });
+};
+
+// Login Route (Unprotected)
 router.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -13,16 +21,51 @@ router.post('/auth/login', async (req, res) => {
     if (!user || !(await user.comparePassword(password))) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
+    const token = signToken(user._id);
     const userObj = user.toObject();
     delete userObj.password;
-    res.json(userObj);
+    res.json({ token, user: userObj });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
+// Signup Route (Unprotected)
+router.post('/auth/signup', async (req, res) => {
+  try {
+    const { name, email, password, studentId } = req.body;
+    
+    // Check if email is already in use
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Email is already in use' });
+    }
+
+    // Create a new user (defaults to student role)
+    const user = new User({
+      name,
+      email,
+      password,
+      studentId,
+      role: 'student'
+    });
+
+    await user.save();
+
+    const token = signToken(user._id);
+    const userObj = user.toObject();
+    delete userObj.password;
+
+    res.status(201).json({ token, user: userObj });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// --- ALL ROUTES BELOW THIS ARE PROTECTED ---
+
 // Get all components (Student Catalog)
-router.get('/components', async (req, res) => {
+router.get('/components', protect, async (req, res) => {
   try {
     const components = await Component.find();
     res.json(components);
@@ -32,7 +75,7 @@ router.get('/components', async (req, res) => {
 });
 
 // Add new component (Admin Upload)
-router.post('/components', async (req, res) => {
+router.post('/components', protect, restrictTo('admin'), async (req, res) => {
   try {
     const component = new Component(req.body);
     await component.save();
@@ -43,7 +86,7 @@ router.post('/components', async (req, res) => {
 });
 
 // Checkout items (Cart)
-router.post('/checkout', async (req, res) => {
+router.post('/checkout', protect, async (req, res) => {
   try {
     const { userId, items } = req.body; // items: [{ componentId, quantity, hours }]
     
@@ -86,7 +129,7 @@ router.post('/checkout', async (req, res) => {
 });
 
 // Get user specific rentals
-router.get('/rentals/user/:userId', async (req, res) => {
+router.get('/rentals/user/:userId', protect, async (req, res) => {
   try {
     const rentals = await RentalTransaction.find({ userId: req.params.userId })
       .populate('componentId', 'name imageUrl')
@@ -98,7 +141,7 @@ router.get('/rentals/user/:userId', async (req, res) => {
 });
 
 // Get all active and pending rentals (Admin Dashboard)
-router.get('/rentals/active', async (req, res) => {
+router.get('/rentals/active', protect, restrictTo('admin'), async (req, res) => {
   try {
     const rentals = await RentalTransaction.find({ status: { $in: ['active', 'overdue', 'pending'] } })
       .populate('userId', 'name email')
@@ -110,7 +153,7 @@ router.get('/rentals/active', async (req, res) => {
 });
 
 // Mark item returned (Admin Dashboard)
-router.post('/return/:transactionId', async (req, res) => {
+router.post('/return/:transactionId', protect, restrictTo('admin'), async (req, res) => {
   try {
     const { transactionId } = req.params;
     
@@ -134,7 +177,7 @@ router.post('/return/:transactionId', async (req, res) => {
 });
 
 // Approve rental request
-router.post('/rentals/:id/approve', async (req, res) => {
+router.post('/rentals/:id/approve', protect, restrictTo('admin'), async (req, res) => {
   try {
     const transaction = await RentalTransaction.findById(req.params.id);
     if (!transaction || transaction.status !== 'pending') {
@@ -149,7 +192,7 @@ router.post('/rentals/:id/approve', async (req, res) => {
 });
 
 // Reject rental request
-router.post('/rentals/:id/reject', async (req, res) => {
+router.post('/rentals/:id/reject', protect, restrictTo('admin'), async (req, res) => {
   try {
     const transaction = await RentalTransaction.findById(req.params.id);
     if (!transaction || transaction.status !== 'pending') {
@@ -170,7 +213,7 @@ router.post('/rentals/:id/reject', async (req, res) => {
 });
 
 // Get component renters
-router.get('/components/:id/renters', async (req, res) => {
+router.get('/components/:id/renters', protect, restrictTo('admin'), async (req, res) => {
   try {
     const rentals = await RentalTransaction.find({ 
       componentId: req.params.id, 
@@ -183,7 +226,7 @@ router.get('/components/:id/renters', async (req, res) => {
 });
 
 // Get lectures
-router.get('/lectures', async (req, res) => {
+router.get('/lectures', protect, async (req, res) => {
   try {
     const lectures = await Lecture.find()
       .populate('requiredEquipment')
@@ -195,7 +238,7 @@ router.get('/lectures', async (req, res) => {
 });
 
 // Create lecture
-router.post('/lectures', async (req, res) => {
+router.post('/lectures', protect, restrictTo('admin'), async (req, res) => {
   try {
     const lecture = new Lecture(req.body);
     await lecture.save();
@@ -206,10 +249,47 @@ router.post('/lectures', async (req, res) => {
 });
 
 // Delete lecture
-router.delete('/lectures/:id', async (req, res) => {
+router.delete('/lectures/:id', protect, restrictTo('admin'), async (req, res) => {
   try {
     await Lecture.findByIdAndDelete(req.params.id);
     res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Mark lecture as completed
+router.post('/lectures/:id/complete', protect, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const lectureId = req.params.id;
+    const lecture = await Lecture.findById(lectureId);
+    if (!lecture) {
+      return res.status(404).json({ error: 'Lecture not found' });
+    }
+
+    // Check if prerequisites are completed
+    if (lecture.prerequisites && lecture.prerequisites.length > 0) {
+      const completedIds = user.completedLectures.map(id => id.toString());
+      const hasPrereqs = lecture.prerequisites.every(prereqId => completedIds.includes(prereqId.toString()));
+      if (!hasPrereqs) {
+        return res.status(400).json({ error: 'You must complete the prerequisites first.' });
+      }
+    }
+
+    if (!user.completedLectures.includes(lectureId)) {
+      user.completedLectures.push(lectureId);
+      await user.save();
+    }
+
+    // Return updated user object
+    const userObj = user.toObject();
+    delete userObj.password;
+    res.json(userObj);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
