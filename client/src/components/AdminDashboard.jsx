@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Users, PackageOpen, AlertTriangle, CheckCircle2, Search, Plus, X, Video, Check, XCircle, Pencil } from 'lucide-react';
+import { Users, PackageOpen, AlertTriangle, CheckCircle2, Search, Plus, X, Video, Check, XCircle, Pencil, Wallet, Coins, History } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { format, isPast } from 'date-fns';
 import { useAppContext } from '../context/AppContext';
@@ -244,6 +244,8 @@ export default function AdminDashboard() {
   const [lectures, setLectures] = useState([]);
   const [labRequests, setLabRequests] = useState([]);
   const [students, setStudents] = useState([]);
+  const [labs, setLabs] = useState([]);
+  const [walletLogs, setWalletLogs] = useState([]);
   const [search, setSearch] = useState('');
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [isLectureUploadOpen, setIsLectureUploadOpen] = useState(false);
@@ -257,9 +259,23 @@ export default function AdminDashboard() {
   const [lectureDifficultyFilter, setLectureDifficultyFilter] = useState('');
   const [lectureDepartmentFilter, setLectureDepartmentFilter] = useState('');
 
-  useEffect(() => {
-    fetchData();
-  }, [user]);
+  // Wallet adjustment states
+  const [isAdjustWalletOpen, setIsAdjustWalletOpen] = useState(false);
+  const [adjustWalletUser, setAdjustWalletUser] = useState(null);
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustType, setAdjustType] = useState('topup');
+  const [adjustDesc, setAdjustDesc] = useState('');
+  const [isAdjusting, setIsAdjusting] = useState(false);
+
+  // Labs management states
+  const [isLabModalOpen, setIsLabModalOpen] = useState(false);
+  const [editingLab, setEditingLab] = useState(null);
+  const [labName, setLabName] = useState('');
+  const [labDesc, setLabDesc] = useState('');
+  const [labManager, setLabManager] = useState('');
+  const [labAssistants, setLabAssistants] = useState([]);
+  const [labComponents, setLabComponents] = useState([]);
+  const [isSavingLab, setIsSavingLab] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -289,13 +305,26 @@ export default function AdminDashboard() {
         promises.push(Promise.resolve({ data: [] }));
       }
 
-      const [lecturesRes, rentalsRes, compRes, labRequestsRes, studentsRes] = await Promise.all(promises);
+      // Always fetch labs for authenticated dashboard users
+      promises.push(axios.get(`${import.meta.env.VITE_BACKEND_URL}/labs`));
+
+      // Fetch wallet logs if admin or has wallet permission
+      const hasWalletPerm = user?.role === 'admin' || user?.canUpdateWallet === true;
+      if (hasWalletPerm) {
+        promises.push(axios.get(`${import.meta.env.VITE_BACKEND_URL}/users/wallet/all-transactions`));
+      } else {
+        promises.push(Promise.resolve({ data: [] }));
+      }
+
+      const [lecturesRes, rentalsRes, compRes, labRequestsRes, studentsRes, labsRes, walletLogsRes] = await Promise.all(promises);
       
       setLectures(lecturesRes.data);
       setRentals(rentalsRes.data);
       setComponents(compRes.data);
       setLabRequests(labRequestsRes.data);
       setStudents(studentsRes.data);
+      setLabs(labsRes.data);
+      setWalletLogs(walletLogsRes.data);
     } catch (err) {
       console.error(err);
       toast.error(err.response?.data?.error || 'Failed to fetch dashboard data');
@@ -428,6 +457,91 @@ export default function AdminDashboard() {
     }
   };
 
+  const handleToggleWalletPermission = async (userId, currentValue) => {
+    try {
+      await axios.put(`${import.meta.env.VITE_BACKEND_URL}/users/${userId}/wallet-permission`, {
+        canUpdateWallet: !currentValue
+      });
+      toast.success('Wallet permission updated successfully!');
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update wallet permission');
+    }
+  };
+
+  const handleAdjustWalletSubmit = async (e) => {
+    e.preventDefault();
+    const amount = parseFloat(adjustAmount);
+    if (isNaN(amount) || amount === 0) {
+      toast.error('Please enter a valid non-zero amount');
+      return;
+    }
+    if (!adjustDesc.trim()) {
+      toast.error('Description is required');
+      return;
+    }
+    setIsAdjusting(true);
+    try {
+      await axios.post(`${import.meta.env.VITE_BACKEND_URL}/users/wallet/update-balance`, {
+        userId: adjustWalletUser._id,
+        amount,
+        type: adjustType,
+        description: adjustDesc
+      });
+      toast.success('Wallet updated successfully!');
+      setIsAdjustWalletOpen(false);
+      setAdjustAmount('');
+      setAdjustDesc('');
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to update wallet balance');
+    } finally {
+      setIsAdjusting(false);
+    }
+  };
+
+  const handleSaveLab = async (e) => {
+    e.preventDefault();
+    if (!labName.trim() || !labManager) {
+      toast.error('Lab name and manager are required');
+      return;
+    }
+    setIsSavingLab(true);
+    try {
+      const payload = {
+        name: labName,
+        description: labDesc,
+        manager: labManager,
+        assistants: labAssistants,
+        components: labComponents
+      };
+      if (editingLab) {
+        await axios.put(`${import.meta.env.VITE_BACKEND_URL}/labs/${editingLab._id}`, payload);
+        toast.success('Lab updated successfully!');
+      } else {
+        await axios.post(`${import.meta.env.VITE_BACKEND_URL}/labs`, payload);
+        toast.success('Lab created successfully!');
+      }
+      setIsLabModalOpen(false);
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to save lab');
+    } finally {
+      setIsSavingLab(false);
+    }
+  };
+
+  const handleDeleteLab = async (labId) => {
+    if (!window.confirm('Are you sure you want to delete this lab?')) return;
+    try {
+      await axios.delete(`${import.meta.env.VITE_BACKEND_URL}/labs/${labId}`);
+      toast.success('Lab deleted successfully');
+      fetchData();
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to delete lab');
+    }
+  };
+
   const handleSaveDueTime = async (rentalId) => {
     setIsSavingDue(true);
     try {
@@ -468,6 +582,16 @@ export default function AdminDashboard() {
         <Button variant={activeTab === 'users' ? 'default' : 'ghost'} onClick={() => setActiveTab('users')}>
           <Users className="mr-2 h-4 w-4" /> Manage Users
         </Button>
+        {(user?.role === 'admin' || user?.role === 'teacher') && (
+          <Button variant={activeTab === 'labs' ? 'default' : 'ghost'} onClick={() => setActiveTab('labs')}>
+            <PackageOpen className="mr-2 h-4 w-4" /> Manage Labs
+          </Button>
+        )}
+        {(user?.role === 'admin' || user?.canUpdateWallet === true) && (
+          <Button variant={activeTab === 'wallet' ? 'default' : 'ghost'} onClick={() => setActiveTab('wallet')}>
+            <Wallet className="mr-2 h-4 w-4" /> Wallet Logs
+          </Button>
+        )}
       </div>
 
       {activeTab === 'dashboard' && (
@@ -888,6 +1012,8 @@ export default function AdminDashboard() {
                     <TableHead>{user?.role === 'admin' ? 'Name' : 'Student Name'}</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>Current Role</TableHead>
+                    <TableHead>Wallet Balance</TableHead>
+                    {user?.role === 'admin' && <TableHead>Wallet Auth</TableHead>}
                     <TableHead>Lab Completion Progress</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
@@ -895,7 +1021,7 @@ export default function AdminDashboard() {
                 <TableBody>
                   {students.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                      <TableCell colSpan={user?.role === 'admin' ? 7 : 6} className="h-24 text-center text-muted-foreground">
                         No users found.
                       </TableCell>
                     </TableRow>
@@ -914,6 +1040,20 @@ export default function AdminDashboard() {
                               {student.role}
                             </Badge>
                           </TableCell>
+                          <TableCell className="font-bold text-slate-700 dark:text-slate-350">
+                            ₹{student.walletBalance !== undefined ? student.walletBalance.toFixed(2) : '0.00'}
+                          </TableCell>
+                          {user?.role === 'admin' && (
+                            <TableCell>
+                              <input
+                                type="checkbox"
+                                checked={student.canUpdateWallet || false}
+                                disabled={student.role === 'admin'} // Admin always has permission
+                                onChange={() => handleToggleWalletPermission(student._id, student.canUpdateWallet)}
+                                className="rounded border-slate-350 text-primary focus:ring-primary h-4 w-4"
+                              />
+                            </TableCell>
+                          )}
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <span className="font-semibold">{completedCount} / {totalLectures}</span>
@@ -924,7 +1064,23 @@ export default function AdminDashboard() {
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="text-right flex items-center justify-end gap-2">
+                            {(user?.role === 'admin' || user?.canUpdateWallet) && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-emerald-600 border-emerald-600/30 hover:bg-emerald-500/10 flex items-center gap-1.5"
+                                onClick={() => {
+                                  setAdjustWalletUser(student);
+                                  setAdjustAmount('');
+                                  setAdjustDesc('');
+                                  setAdjustType('topup');
+                                  setIsAdjustWalletOpen(true);
+                                }}
+                              >
+                                <Coins className="h-3.5 w-3.5" /> Adjust
+                              </Button>
+                            )}
                             {user?.role === 'admin' ? (
                               <select 
                                 value={student.role}
@@ -964,6 +1120,395 @@ export default function AdminDashboard() {
                 </TableBody>
               </Table>
             </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {activeTab === 'labs' && (
+        <div className="space-y-6 animate-in fade-in duration-300">
+          <div className="flex justify-between items-center">
+            <div>
+              <h2 className="text-2xl font-bold tracking-tight">Manage Labs</h2>
+              <p className="text-muted-foreground">Configure physical labs, assign manager/assistants, and map hardware components.</p>
+            </div>
+            <Button onClick={() => {
+              setEditingLab(null);
+              setLabName('');
+              setLabDesc('');
+              setLabManager('');
+              setLabAssistants([]);
+              setLabComponents([]);
+              setIsLabModalOpen(true);
+            }} className="shadow-lg">
+              <Plus className="mr-2 h-4 w-4" /> Create Lab
+            </Button>
+          </div>
+
+          <Card className="bg-white/60 dark:bg-slate-950/60 backdrop-blur-xl border-white/20 shadow-xl overflow-hidden">
+            <CardHeader className="bg-muted/20 border-b pb-4">
+              <CardTitle>All Physical Labs ({labs.length})</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Lab Name</TableHead>
+                    <TableHead>Description</TableHead>
+                    <TableHead>Manager</TableHead>
+                    <TableHead>Assistants (DAs)</TableHead>
+                    <TableHead>Mapped Components</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {labs.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                        No labs created yet. Click "Create Lab" to get started.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    labs.map(lab => (
+                      <TableRow key={lab._id}>
+                        <TableCell className="font-bold">{lab.name}</TableCell>
+                        <TableCell className="text-xs max-w-xs truncate">{lab.description || 'N/A'}</TableCell>
+                        <TableCell className="text-xs">
+                          {lab.manager ? (
+                            <div>
+                              <p className="font-semibold">{lab.manager.name}</p>
+                              <p className="text-slate-400">{lab.manager.email}</p>
+                            </div>
+                          ) : 'None'}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {lab.assistants && lab.assistants.length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {lab.assistants.map(a => (
+                                <Badge key={a._id} variant="secondary" className="text-[10px]">
+                                  {a.name}
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">None</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {lab.components && lab.components.length > 0 ? (
+                            <div className="flex flex-wrap gap-1 max-w-xs">
+                              {lab.components.map(c => (
+                                <Badge key={c._id} variant="outline" className="text-[10px] bg-slate-50 dark:bg-slate-900/50">
+                                  {c.name} (x{c.availableQuantity})
+                                </Badge>
+                              ))}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">No components mapped</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setEditingLab(lab);
+                                setLabName(lab.name);
+                                setLabDesc(lab.description || '');
+                                setLabManager(lab.manager?._id || '');
+                                setLabAssistants(lab.assistants?.map(a => a._id) || []);
+                                setLabComponents(lab.components?.map(c => c._id) || []);
+                                setIsLabModalOpen(true);
+                              }}
+                            >
+                              <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => handleDeleteLab(lab._id)}
+                            >
+                              <X className="h-3.5 w-3.5 mr-1" /> Delete
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {activeTab === 'wallet' && (
+        <div className="space-y-6 animate-in fade-in duration-300">
+          <div>
+            <h2 className="text-2xl font-bold tracking-tight">Wallet Transaction Audit Trail</h2>
+            <p className="text-muted-foreground">Auditable record of all wallet updates, fines, topups, and manual adjustments.</p>
+          </div>
+
+          <Card className="bg-white/60 dark:bg-slate-950/60 backdrop-blur-xl border-white/20 shadow-xl overflow-hidden">
+            <CardHeader className="bg-muted/20 border-b pb-4">
+              <CardTitle>All Transactions ({walletLogs.length})</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Student</TableHead>
+                    <TableHead>Operator</TableHead>
+                    <TableHead>Type</TableHead>
+                    <TableHead>Amount</TableHead>
+                    <TableHead>Prev &rarr; New Balance</TableHead>
+                    <TableHead>Reason/Description</TableHead>
+                    <TableHead>Date & Time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {walletLogs.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
+                        No transactions logged yet.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    walletLogs.map(log => (
+                      <TableRow key={log._id}>
+                        <TableCell className="font-semibold">
+                          {log.userId ? (
+                            <div>
+                              <p className="text-sm font-medium">{log.userId.name}</p>
+                              <p className="text-[10px] text-slate-400 uppercase">{log.userId.role}</p>
+                            </div>
+                          ) : 'Deleted User'}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {log.updatedBy ? (
+                            <div>
+                              <p className="font-semibold">{log.updatedBy.name}</p>
+                              <p className="text-[10px] text-slate-400 uppercase">{log.updatedBy.role}</p>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400 italic">System Auto</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`text-[10px] uppercase font-bold ${
+                            log.type === 'topup' ? 'bg-green-50 text-green-700 border-green-200' :
+                            log.type === 'fine' ? 'bg-red-50 text-red-700 border-red-200' :
+                            log.type === 'refund' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                            'bg-slate-50 text-slate-700 border-slate-250'
+                          }`}>
+                            {log.type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className={`font-bold ${log.amount > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                          {log.amount > 0 ? '+' : ''}₹{log.amount.toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-xs font-mono">
+                          ₹{log.previousBalance.toFixed(2)} ➔ ₹{log.newBalance.toFixed(2)}
+                        </TableCell>
+                        <TableCell className="text-xs max-w-xs">{log.description}</TableCell>
+                        <TableCell className="text-xs">
+                          {format(new Date(log.createdAt), 'MMM d, yyyy h:mm a')}
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Adjust Wallet Balance Modal */}
+      {isAdjustWalletOpen && adjustWalletUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setIsAdjustWalletOpen(false)} />
+          <Card className="relative w-full max-w-md shadow-2xl border-white/20 z-10 mx-4 bg-white/95 dark:bg-slate-950/95 backdrop-blur-xl animate-in zoom-in-95 duration-200">
+            <button 
+              onClick={() => setIsAdjustWalletOpen(false)}
+              className="absolute right-4 top-4 rounded-sm opacity-70 hover:opacity-100"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <form onSubmit={handleAdjustWalletSubmit}>
+              <CardHeader>
+                <CardTitle>Adjust Wallet Balance</CardTitle>
+                <CardDescription>
+                  Modify wallet balance for <strong>{adjustWalletUser.name}</strong>. Current: ₹{adjustWalletUser.walletBalance?.toFixed(2) || '0.00'}.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Adjustment Amount (₹)</label>
+                  <input
+                    required
+                    type="number"
+                    step="0.01"
+                    placeholder="e.g. 500 for topup, -200 for fine"
+                    value={adjustAmount}
+                    onChange={e => setAdjustAmount(e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    disabled={isAdjusting}
+                  />
+                  <p className="text-[10px] text-muted-foreground">Enter a positive number to add funds, or a negative number to impose fines/deduct funds.</p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Transaction Type</label>
+                  <select
+                    value={adjustType}
+                    onChange={e => setAdjustType(e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    disabled={isAdjusting}
+                  >
+                    <option value="topup">Top Up (Add Funds)</option>
+                    <option value="fine">Fine (Impose penalty)</option>
+                    <option value="refund">Refund (Credit back)</option>
+                    <option value="adjustment">General Adjustment</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Reason / Description</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="Describe why balance is being updated"
+                    value={adjustDesc}
+                    onChange={e => setAdjustDesc(e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    disabled={isAdjusting}
+                  />
+                </div>
+              </CardContent>
+              <div className="flex justify-end gap-2 p-6 border-t border-white/10">
+                <Button variant="outline" type="button" onClick={() => setIsAdjustWalletOpen(false)} disabled={isAdjusting}>Cancel</Button>
+                <Button type="submit" disabled={isAdjusting} className="bg-emerald-600 hover:bg-emerald-700 text-white">
+                  {isAdjusting ? 'Updating...' : 'Update Balance'}
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* Create/Edit Lab Modal */}
+      {isLabModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="fixed inset-0" onClick={() => setIsLabModalOpen(false)} />
+          <Card className="relative w-full max-w-lg shadow-2xl border-white/20 z-10 mx-4 bg-white/95 dark:bg-slate-950/95 backdrop-blur-xl animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
+            <button 
+              onClick={() => setIsLabModalOpen(false)}
+              className="absolute right-4 top-4 rounded-sm opacity-70 hover:opacity-100"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <form onSubmit={handleSaveLab}>
+              <CardHeader>
+                <CardTitle>{editingLab ? 'Edit Physical Lab' : 'Create New Physical Lab'}</CardTitle>
+                <CardDescription>Configure physical lab hardware map, manager, and assistants.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Lab Name</label>
+                  <input
+                    required
+                    type="text"
+                    placeholder="e.g. Microprocessors Lab (ECE-302)"
+                    value={labName}
+                    onChange={e => setLabName(e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    disabled={isSavingLab}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Description</label>
+                  <textarea
+                    placeholder="Describe location, hours, or specific lab focus"
+                    value={labDesc}
+                    onChange={e => setLabDesc(e.target.value)}
+                    className="flex w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary h-20"
+                    disabled={isSavingLab}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Lab Manager (Admin or Teacher)</label>
+                  <select
+                    required
+                    value={labManager}
+                    onChange={e => setLabManager(e.target.value)}
+                    className="flex h-10 w-full rounded-md border border-input bg-background/50 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    disabled={isSavingLab}
+                  >
+                    <option value="">Select Lab Manager</option>
+                    {students.filter(s => ['admin', 'teacher'].includes(s.role)).map(m => (
+                      <option key={m._id} value={m._id}>
+                        {m.name} ({m.role.toUpperCase()})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Lab Assistants (DAs / Students)</label>
+                  <div className="max-h-32 overflow-y-auto border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-1.5 bg-slate-50/50">
+                    {students.filter(s => ['da', 'student'].includes(s.role)).map(a => (
+                      <label key={a._id} className="flex items-center gap-2 text-xs font-medium cursor-pointer p-1 rounded hover:bg-white dark:hover:bg-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={labAssistants.includes(a._id)}
+                          onChange={e => {
+                            if (e.target.checked) {
+                              setLabAssistants([...labAssistants, a._id]);
+                            } else {
+                              setLabAssistants(labAssistants.filter(id => id !== a._id));
+                            }
+                          }}
+                          className="rounded border-slate-350 text-primary focus:ring-primary h-3.5 w-3.5"
+                        />
+                        <span>{a.name} ({a.role.toUpperCase()})</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Map Lab Components</label>
+                  <div className="max-h-32 overflow-y-auto border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 space-y-1.5 bg-slate-50/50">
+                    {components.map(comp => (
+                      <label key={comp._id} className="flex items-center gap-2 text-xs font-medium cursor-pointer p-1 rounded hover:bg-white dark:hover:bg-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={labComponents.includes(comp._id)}
+                          onChange={e => {
+                            if (e.target.checked) {
+                              setLabComponents([...labComponents, comp._id]);
+                            } else {
+                              setLabComponents(labComponents.filter(id => id !== comp._id));
+                            }
+                          }}
+                          className="rounded border-slate-350 text-primary focus:ring-primary h-3.5 w-3.5"
+                        />
+                        <span>{comp.name} ({comp.category})</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+              <div className="flex justify-end gap-2 p-6 border-t border-white/10">
+                <Button variant="outline" type="button" onClick={() => setIsLabModalOpen(false)} disabled={isSavingLab}>Cancel</Button>
+                <Button type="submit" disabled={isSavingLab}>
+                  {isSavingLab ? 'Saving...' : (editingLab ? 'Update Lab' : 'Create Lab')}
+                </Button>
+              </div>
+            </form>
           </Card>
         </div>
       )}

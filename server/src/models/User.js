@@ -51,6 +51,10 @@ const userSchema = new mongoose.Schema(
       type: Number,
       default: 500,
     },
+    canUpdateWallet: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,

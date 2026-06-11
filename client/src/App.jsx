@@ -11,6 +11,7 @@ import Lectures from './components/Lectures';
 import { useAppContext } from './context/AppContext';
 import { Toaster } from 'react-hot-toast';
 import VerifyLabs from './components/VerifyLabs';
+import LabsList from './components/LabsList';
 
 function ProtectedRoute({ children, roles }) {
   const { user } = useAppContext();
@@ -34,6 +35,7 @@ function App() {
           <Route path="/checkout-overview" element={<ProtectedRoute><CheckoutOverview /></ProtectedRoute>} />
           <Route path="/admin" element={<ProtectedRoute roles={['admin', 'teacher']}><AdminDashboard /></ProtectedRoute>} />
           <Route path="/verify-labs" element={<ProtectedRoute><VerifyLabs /></ProtectedRoute>} />
+          <Route path="/labs" element={<ProtectedRoute><LabsList /></ProtectedRoute>} />
         </Routes>
       </main>
       <Toaster 

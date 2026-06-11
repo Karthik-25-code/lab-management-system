@@ -6,12 +6,35 @@ const RentalTransaction = require('../models/RentalTransaction');
 const Lecture = require('../models/Lecture');
 const User = require('../models/User');
 const LabCompletionRequest = require('../models/LabCompletionRequest');
+const WalletTransaction = require('../models/WalletTransaction');
+const Lab = require('../models/Lab');
 const { protect, restrictTo } = require('../middleware/auth');
 
 const signToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET || 'labmgmt_super_secret_key_2024_change_in_production', {
     expiresIn: process.env.JWT_EXPIRES_IN || '7d'
   });
+};
+
+// Central helper to update wallet balance and log the transaction
+const adjustWalletAndLog = async ({ userId, updatedBy, amount, type, description }) => {
+  const user = await User.findById(userId);
+  if (!user) throw new Error('User not found');
+  const previousBalance = user.walletBalance;
+  user.walletBalance = Number((user.walletBalance + amount).toFixed(2));
+  await user.save();
+  
+  const log = new WalletTransaction({
+    userId,
+    updatedBy: updatedBy || null,
+    amount,
+    type,
+    previousBalance,
+    newBalance: user.walletBalance,
+    description
+  });
+  await log.save();
+  return user;
 };
 
 // Login Route (Unprotected)
@@ -191,11 +214,13 @@ router.post('/return/:transactionId', protect, restrictTo('admin', 'teacher'), a
     await transaction.save();
 
     if (fine > 0) {
-      const user = await User.findById(transaction.userId);
-      if (user) {
-        user.walletBalance -= fine;
-        await user.save();
-      }
+      await adjustWalletAndLog({
+        userId: transaction.userId,
+        updatedBy: req.user._id,
+        amount: -fine,
+        type: 'fine',
+        description: `Late return fine for transaction ${transactionId}`
+      });
     }
 
     const component = await Component.findById(transaction.componentId);
@@ -265,14 +290,19 @@ router.post('/rentals/:id/fine', protect, restrictTo('admin', 'teacher'), async 
     }
 
     const fine = Number(fineAmount);
-    student.walletBalance -= fine;
-    await student.save();
+    const updatedStudent = await adjustWalletAndLog({
+      userId: transaction.userId,
+      updatedBy: req.user._id,
+      amount: -fine,
+      type: 'fine',
+      description: `Manual fine on rental transaction ${req.params.id}`
+    });
 
     transaction.fineAmount += fine;
     transaction.finePaid = true;
     await transaction.save();
 
-    res.json({ transaction, walletBalance: student.walletBalance });
+    res.json({ transaction, walletBalance: updatedStudent.walletBalance });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -568,19 +598,108 @@ router.get('/users/profile', protect, async (req, res) => {
   }
 });
 
-// Top up user's wallet
+// Toggle canUpdateWallet permission for a user (Admin only)
+router.put('/users/:id/wallet-permission', protect, restrictTo('admin'), async (req, res) => {
+  try {
+    const { canUpdateWallet } = req.body;
+    if (typeof canUpdateWallet !== 'boolean') {
+      return res.status(400).json({ error: 'canUpdateWallet must be a boolean' });
+    }
+    const userToUpdate = await User.findById(req.params.id);
+    if (!userToUpdate) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    userToUpdate.canUpdateWallet = canUpdateWallet;
+    await userToUpdate.save();
+    res.json(userToUpdate);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update any user's wallet balance (Restricted to admin / users with canUpdateWallet permission)
+router.post('/users/wallet/update-balance', protect, async (req, res) => {
+  try {
+    const hasPermission = req.user.role === 'admin' || req.user.canUpdateWallet === true;
+    if (!hasPermission) {
+      return res.status(403).json({ error: 'You do not have permission to update wallet balances' });
+    }
+
+    const { userId, amount, type, description } = req.body;
+    if (!userId || amount === undefined || isNaN(Number(amount)) || !type || !description) {
+      return res.status(400).json({ error: 'Please provide target userId, numeric amount, type, and description' });
+    }
+
+    if (!['topup', 'fine', 'refund', 'adjustment'].includes(type)) {
+      return res.status(400).json({ error: 'Invalid transaction type' });
+    }
+
+    const targetUser = await User.findById(userId);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'Target user not found' });
+    }
+
+    const updatedUser = await adjustWalletAndLog({
+      userId,
+      updatedBy: req.user._id,
+      amount: Number(amount),
+      type,
+      description
+    });
+
+    res.json(updatedUser);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get current user's wallet transaction logs
+router.get('/users/wallet/my-transactions', protect, async (req, res) => {
+  try {
+    const logs = await WalletTransaction.find({ userId: req.user._id })
+      .populate('updatedBy', 'name role')
+      .sort({ createdAt: -1 });
+    res.json(logs);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all wallet transaction logs (Restricted to admin / users with canUpdateWallet permission)
+router.get('/users/wallet/all-transactions', protect, async (req, res) => {
+  try {
+    const hasPermission = req.user.role === 'admin' || req.user.canUpdateWallet === true;
+    if (!hasPermission) {
+      return res.status(403).json({ error: 'You do not have permission to view all wallet transactions' });
+    }
+    const logs = await WalletTransaction.find({})
+      .populate('userId', 'name email role')
+      .populate('updatedBy', 'name role')
+      .sort({ createdAt: -1 });
+    res.json(logs);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Top up user's wallet (Restricted to authorized operators)
 router.post('/users/wallet/topup', protect, async (req, res) => {
   try {
+    const hasPermission = req.user.role === 'admin' || req.user.canUpdateWallet === true;
+    if (!hasPermission) {
+      return res.status(403).json({ error: 'You do not have permission to update wallet balances' });
+    }
     const { amount } = req.body;
     if (!amount || amount <= 0) {
       return res.status(400).json({ error: 'Please provide a valid top-up amount' });
     }
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    user.walletBalance += Number(amount);
-    await user.save();
+    const user = await adjustWalletAndLog({
+      userId: req.user._id,
+      updatedBy: req.user._id,
+      amount: Number(amount),
+      type: 'topup',
+      description: 'Self top-up (Authorized Operator)'
+    });
     res.json(user);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -590,7 +709,7 @@ router.post('/users/wallet/topup', protect, async (req, res) => {
 // Submit a lab completion request
 router.post('/lab-requests', protect, async (req, res) => {
   try {
-    const { lectureId, requestedVerifierId } = req.body;
+    const { lectureId, requestedVerifierId, requestedVerifierIds } = req.body;
     const studentId = req.user._id;
 
     // Check if lecture exists
@@ -619,10 +738,14 @@ router.post('/lab-requests', protect, async (req, res) => {
       }
     }
 
+    const requestedVerifierIdsArray = Array.isArray(requestedVerifierIds) 
+      ? requestedVerifierIds 
+      : (requestedVerifierId ? [requestedVerifierId] : []);
+
     const request = new LabCompletionRequest({
       studentId,
       lectureId,
-      requestedVerifierId: requestedVerifierId || undefined,
+      requestedVerifierIds: requestedVerifierIdsArray,
       status: 'pending',
       daStatus: 'pending',
       teacherStatus: 'pending',
@@ -653,7 +776,7 @@ router.get('/lab-requests/pending', protect, async (req, res) => {
       // Admins see all pending requests
     } else if (req.user.role === 'student') {
       // Standard students can only see requests specifically assigned to them
-      query.requestedVerifierId = req.user._id;
+      query.requestedVerifierIds = req.user._id;
     }
 
     const requests = await LabCompletionRequest.find(query)
@@ -663,7 +786,7 @@ router.get('/lab-requests/pending', protect, async (req, res) => {
       .populate('daActionedBy', 'name role')
       .populate('teacherActionedBy', 'name role')
       .populate('adminActionedBy', 'name role')
-      .populate('requestedVerifierId', 'name role')
+      .populate('requestedVerifierIds', 'name role')
       .sort({ createdAt: 1 });
     
     res.json(requests);
@@ -679,7 +802,7 @@ router.get('/lab-requests', protect, async (req, res) => {
     if (req.user.role === 'student') {
       // Standard students can only see requests assigned to them or actioned by them
       query.$or = [
-        { requestedVerifierId: req.user._id },
+        { requestedVerifierIds: req.user._id },
         { actionedBy: req.user._id }
       ];
     }
@@ -690,7 +813,7 @@ router.get('/lab-requests', protect, async (req, res) => {
       .populate('daActionedBy', 'name role')
       .populate('teacherActionedBy', 'name role')
       .populate('adminActionedBy', 'name role')
-      .populate('requestedVerifierId', 'name role')
+      .populate('requestedVerifierIds', 'name role')
       .sort({ createdAt: -1 });
     res.json(requests);
   } catch (error) {
@@ -706,7 +829,7 @@ router.get('/lab-requests/my-requests', protect, async (req, res) => {
       .populate('daActionedBy', 'name role')
       .populate('teacherActionedBy', 'name role')
       .populate('adminActionedBy', 'name role')
-      .populate('requestedVerifierId', 'name role')
+      .populate('requestedVerifierIds', 'name role')
       .sort({ updatedAt: -1 });
     res.json(requests);
   } catch (error) {
@@ -724,7 +847,7 @@ router.post('/lab-requests/:id/action', protect, async (req, res) => {
     }
 
     const userRole = req.user.role;
-    const isAssignedVerifier = request.requestedVerifierId && request.requestedVerifierId.toString() === req.user._id.toString();
+    const isAssignedVerifier = request.requestedVerifierIds && request.requestedVerifierIds.some(id => id.toString() === req.user._id.toString());
     const isManager = ['admin', 'teacher', 'da'].includes(userRole);
 
     if (!isManager && !isAssignedVerifier) {
@@ -801,6 +924,106 @@ router.post('/lab-requests/:id/action', protect, async (req, res) => {
     }
 
     res.json(request);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// --- LABS ROUTES ---
+
+// Create Lab (Admins and Teachers only)
+router.post('/labs', protect, restrictTo('admin', 'teacher'), async (req, res) => {
+  try {
+    const { name, description, components, manager, assistants } = req.body;
+    if (!name || !manager) {
+      return res.status(400).json({ error: 'Lab name and manager are required' });
+    }
+    const lab = new Lab({
+      name,
+      description,
+      components: components || [],
+      manager,
+      assistants: assistants || []
+    });
+    await lab.save();
+    res.status(201).json(lab);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get all Labs (All authenticated users)
+router.get('/labs', protect, async (req, res) => {
+  try {
+    const labs = await Lab.find()
+      .populate('components', 'name category totalQuantity availableQuantity imageUrl')
+      .populate('manager', 'name email role')
+      .populate('assistants', 'name email role');
+    res.json(labs);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get single Lab details (All authenticated users)
+router.get('/labs/:id', protect, async (req, res) => {
+  try {
+    const lab = await Lab.findById(req.params.id)
+      .populate('components', 'name category totalQuantity availableQuantity imageUrl')
+      .populate('manager', 'name email role')
+      .populate('assistants', 'name email role');
+    if (!lab) {
+      return res.status(404).json({ error: 'Lab not found' });
+    }
+    res.json(lab);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update Lab (Admins, Teachers, or Lab's manager only)
+router.put('/labs/:id', protect, async (req, res) => {
+  try {
+    const lab = await Lab.findById(req.params.id);
+    if (!lab) {
+      return res.status(404).json({ error: 'Lab not found' });
+    }
+
+    const isManager = req.user.role === 'admin' || 
+                      req.user.role === 'teacher' || 
+                      lab.manager.toString() === req.user._id.toString();
+
+    if (!isManager) {
+      return res.status(403).json({ error: 'You do not have permission to modify this lab' });
+    }
+
+    const { name, description, components, manager, assistants } = req.body;
+    if (name) lab.name = name;
+    if (description !== undefined) lab.description = description;
+    if (components) lab.components = components;
+    if (manager) {
+      // Only admin/teacher can change manager
+      if (req.user.role === 'admin' || req.user.role === 'teacher') {
+        lab.manager = manager;
+      }
+    }
+    if (assistants) lab.assistants = assistants;
+
+    await lab.save();
+    res.json(lab);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete Lab (Admins and Teachers only)
+router.delete('/labs/:id', protect, restrictTo('admin', 'teacher'), async (req, res) => {
+  try {
+    const lab = await Lab.findByIdAndDelete(req.params.id);
+    if (!lab) {
+      return res.status(404).json({ error: 'Lab not found' });
+    }
+    res.json({ success: true, message: 'Lab deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

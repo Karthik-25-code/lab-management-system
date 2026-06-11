@@ -109,6 +109,15 @@ export default function Navbar() {
                     Lectures
                   </Link>
                   <Link
+                    to="/labs"
+                    className={cn(
+                      "text-sm font-medium transition-colors hover:text-primary",
+                      location.pathname === '/labs' ? "text-primary font-semibold" : "text-muted-foreground"
+                    )}
+                  >
+                    Labs
+                  </Link>
+                  <Link
                     to="/rentals"
                     className={cn(
                       "text-sm font-medium transition-colors hover:text-primary flex items-center gap-1",
@@ -205,6 +214,13 @@ export default function Navbar() {
                 className={cn("p-2 rounded-md hover:bg-muted font-medium", location.pathname === '/lectures' ? "text-primary bg-muted/50" : "text-muted-foreground")}
               >
                 Lectures
+              </Link>
+              <Link
+                to="/labs"
+                onClick={() => setMobileMenuOpen(false)}
+                className={cn("p-2 rounded-md hover:bg-muted font-medium", location.pathname === '/labs' ? "text-primary bg-muted/50" : "text-muted-foreground")}
+              >
+                Labs
               </Link>
               <Link
                 to="/rentals"

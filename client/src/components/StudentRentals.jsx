@@ -11,6 +11,7 @@ import { Package, Clock, AlertCircle, Check, X } from 'lucide-react';
 export default function StudentRentals() {
   const { user, refreshUser } = useAppContext();
   const [rentals, setRentals] = useState([]);
+  const [transactions, setTransactions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editingDueRentalId, setEditingDueRentalId] = useState(null);
   const [newDueTime, setNewDueTime] = useState('');
@@ -41,6 +42,7 @@ export default function StudentRentals() {
       setTopUpAmount('');
       setIsTopUpOpen(false);
       await refreshUser();
+      await fetchTransactions();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to top up wallet');
     } finally {
@@ -48,19 +50,29 @@ export default function StudentRentals() {
     }
   };
 
+  const fetchTransactions = async () => {
+    try {
+      const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/users/wallet/my-transactions`);
+      setTransactions(res.data);
+    } catch (err) {
+      console.error('Error fetching wallet transactions:', err);
+    }
+  };
+
   useEffect(() => {
-    const fetchRentals = async () => {
+    const fetchData = async () => {
       try {
-        const res = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/rentals/user/${user._id}`);
-        setRentals(res.data);
+        const rentalsRes = await axios.get(`${import.meta.env.VITE_BACKEND_URL}/rentals/user/${user._id}`);
+        setRentals(rentalsRes.data);
+        await fetchTransactions();
       } catch (error) {
-        console.error('Error fetching rentals:', error);
-        toast.error(error.response?.data?.error || 'Failed to load rentals');
+        console.error('Error fetching student data:', error);
+        toast.error(error.response?.data?.error || 'Failed to load data');
       } finally {
         setIsLoading(false);
       }
     };
-    if (user) fetchRentals();
+    if (user) fetchData();
   }, [user]);
 
   const handleSaveDueTime = async (rentalId) => {
@@ -109,16 +121,59 @@ export default function StudentRentals() {
           </div>
           {user.walletBalance < 0 && (
             <p className="text-xs text-destructive font-medium animate-pulse flex items-center gap-1 mt-1">
-              ⚠️ Account locked. Negative balance detected. Please top up to rent new equipment.
+              ⚠️ Account locked. Negative balance detected. Please contact a wallet administrator to pay fines.
             </p>
           )}
         </div>
-        <Button 
-          onClick={() => setIsTopUpOpen(true)}
-          className="rounded-full px-6 shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all bg-primary hover:bg-primary/95 text-primary-foreground font-semibold"
-        >
-          Top Up Wallet
-        </Button>
+        {user.role === 'admin' || user.canUpdateWallet ? (
+          <Button 
+            onClick={() => setIsTopUpOpen(true)}
+            className="rounded-full px-6 shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all bg-primary hover:bg-primary/95 text-primary-foreground font-semibold"
+          >
+            Top Up Wallet
+          </Button>
+        ) : (
+          <div className="text-xs text-muted-foreground bg-slate-100/50 dark:bg-slate-900/50 border border-slate-200/50 dark:border-slate-800/40 rounded-xl p-3 max-w-sm">
+            Please contact an authorized Lab Wallet Administrator (Admin or Teacher) to adjust or top up your wallet balance.
+          </div>
+        )}
+      </div>
+
+      {/* Wallet Transaction logs */}
+      <div className="space-y-4 pt-2">
+        <h2 className="text-xl font-semibold flex items-center gap-2">
+          💸 Wallet Transaction History
+        </h2>
+        {transactions.length === 0 ? (
+          <Card className="bg-white/40 dark:bg-slate-950/40 border-dashed border-2">
+            <CardContent className="flex flex-col items-center justify-center p-6 text-muted-foreground">
+              <p className="text-sm">No wallet transactions logged yet.</p>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto pr-1">
+            {transactions.map(tx => (
+              <div key={tx._id} className="flex justify-between items-center p-3.5 rounded-xl border border-slate-200/60 bg-white/40 dark:bg-slate-900/30 backdrop-blur-md hover:bg-white dark:hover:bg-slate-800/20 transition-all text-xs">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-slate-800 dark:text-slate-200 capitalize">{tx.type}</span>
+                    <span className="text-[10px] text-muted-foreground">{format(new Date(tx.createdAt), 'MMM d, h:mm a')}</span>
+                  </div>
+                  <p className="text-slate-500 dark:text-slate-400">{tx.description}</p>
+                  {tx.updatedBy && (
+                    <p className="text-[9px] text-slate-400">Processed by: {tx.updatedBy.name} ({tx.updatedBy.role?.toUpperCase()})</p>
+                  )}
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <span className={`font-bold text-sm ${tx.amount > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'}`}>
+                    {tx.amount > 0 ? '+' : ''}₹{tx.amount.toFixed(2)}
+                  </span>
+                  <p className="text-[10px] text-muted-foreground">Bal: ₹{tx.newBalance.toFixed(2)}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="space-y-6">

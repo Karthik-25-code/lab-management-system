@@ -32,10 +32,12 @@ const labCompletionRequestSchema = new mongoose.Schema(
       enum: ['pending', 'approved', 'rejected'],
       default: 'pending',
     },
-    requestedVerifierId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User', // Optional selected verifier
-    },
+    requestedVerifierIds: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+      }
+    ],
     actionedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User', // Verifier who approved/rejected (final verifier)

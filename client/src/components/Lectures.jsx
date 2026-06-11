@@ -15,7 +15,7 @@ export default function Lectures() {
   const [requests, setRequests] = useState([]);
   const [verifiers, setVerifiers] = useState([]);
   const [requestModalOpen, setRequestModalOpen] = useState(false);
-  const [selectedVerifierId, setSelectedVerifierId] = useState('');
+  const [selectedVerifierIds, setSelectedVerifierIds] = useState([]);
   const [filterLanguage, setFilterLanguage] = useState('');
   const [filterDifficulty, setFilterDifficulty] = useState('');
   const [filterDepartment, setFilterDepartment] = useState('');
@@ -111,12 +111,12 @@ export default function Lectures() {
     try {
       const res = await axios.post(`${import.meta.env.VITE_BACKEND_URL}/lab-requests`, {
         lectureId,
-        requestedVerifierId: selectedVerifierId || undefined
+        requestedVerifierIds: selectedVerifierIds
       });
       toast.success('Verification request submitted successfully!');
       fetchRequests();
       setRequestModalOpen(false);
-      setSelectedVerifierId('');
+      setSelectedVerifierIds([]);
     } catch (error) {
       toast.error(error.response?.data?.error || 'Failed to submit verification request.');
     }
@@ -319,11 +319,11 @@ export default function Lectures() {
                                   <Clock className="h-4 w-4 animate-pulse" /> Pending Verification
                                 </div>
                                 {renderRequestStatus(currentReq)}
-                                {currentReq.requestedVerifierId && (
-                                  <span className="text-[10px] text-muted-foreground mr-1 mt-1">
-                                    Assigned: {currentReq.requestedVerifierId.name} ({currentReq.requestedVerifierId.role.toUpperCase()})
-                                  </span>
-                                )}
+                                 {currentReq.requestedVerifierIds && currentReq.requestedVerifierIds.length > 0 && (
+                                   <span className="text-[10px] text-muted-foreground mr-1 mt-1">
+                                     Assigned: {currentReq.requestedVerifierIds.map(v => `${v.name} (${v.role.toUpperCase()})`).join(', ')}
+                                   </span>
+                                 )}
                               </div>
                             );
                           } else if (currentReq && currentReq.status === 'rejected') {
@@ -458,8 +458,8 @@ export default function Lectures() {
                                 {renderRequestStatus(req)}
                                 <div className="text-xs text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
                                   <span>Submitted: {format(new Date(req.createdAt), 'MMM d, yyyy h:mm a')}</span>
-                                  {req.requestedVerifierId && (
-                                    <span>Assigned: {req.requestedVerifierId.name}</span>
+                                  {req.requestedVerifierIds && req.requestedVerifierIds.length > 0 && (
+                                    <span>Assigned: {req.requestedVerifierIds.map(v => v.name).join(', ')}</span>
                                   )}
                                 </div>
                                 {req.actionedBy && (
@@ -508,21 +508,35 @@ export default function Lectures() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium">Select Verifier (Optional)</label>
-                <select
-                  value={selectedVerifierId}
-                  onChange={e => setSelectedVerifierId(e.target.value)}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-                >
-                  <option value="">Any Verifier (DA, Teacher, or Admin)</option>
-                  {verifiers.map(v => (
-                    <option key={v._id} value={v._id}>
-                      {v.name} ({v.role.toUpperCase()})
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-muted-foreground">
-                  If you select "Any Verifier", any available DA, Teacher, or Admin can review and approve your completion.
+                <label className="text-sm font-medium">Select Verifiers (Optional)</label>
+                <div className="max-h-48 overflow-y-auto border rounded-xl p-2.5 space-y-1 bg-slate-50/50 dark:bg-slate-900/50">
+                  {verifiers.length === 0 ? (
+                    <p className="text-xs text-muted-foreground p-2 text-center">No other verifiers available.</p>
+                  ) : (
+                    verifiers.map(v => (
+                      <label key={v._id} className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-white dark:hover:bg-slate-800 border border-transparent hover:border-slate-100 dark:hover:border-slate-700 cursor-pointer text-sm transition-all">
+                        <input
+                          type="checkbox"
+                          checked={selectedVerifierIds.includes(v._id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedVerifierIds([...selectedVerifierIds, v._id]);
+                            } else {
+                              setSelectedVerifierIds(selectedVerifierIds.filter(id => id !== v._id));
+                            }
+                          }}
+                          className="rounded border-slate-300 text-primary focus:ring-primary h-4 w-4"
+                        />
+                        <span className="font-medium text-slate-700 dark:text-slate-200">{v.name}</span>
+                        <Badge variant="secondary" className="text-[9px] uppercase px-1.5 py-0.5 ml-auto bg-slate-100 text-slate-600 border border-slate-250 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700">
+                          {v.role}
+                        </Badge>
+                      </label>
+                    ))
+                  )}
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  If you do not select any verifiers, any available DA, Teacher, or Admin can review and approve. Otherwise, only the selected verifiers will see your request.
                 </p>
               </div>
             </CardContent>

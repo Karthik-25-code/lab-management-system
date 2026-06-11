@@ -4,6 +4,8 @@ const User = require('./src/models/User');
 const Component = require('./src/models/Component');
 const RentalTransaction = require('./src/models/RentalTransaction');
 const Lecture = require('./src/models/Lecture');
+const WalletTransaction = require('./src/models/WalletTransaction');
+const Lab = require('./src/models/Lab');
 
 const MOCK_COMPONENTS = [
   { name: 'Arduino Uno R3', category: 'Microcontrollers', availableQuantity: 12, totalQuantity: 30, description: 'Microcontroller board based on the ATmega328P', imageUrl: 'https://images.unsplash.com/photo-1555664424-778a1e5e1b48?auto=format&fit=crop&q=80&w=200' },
@@ -24,6 +26,8 @@ const seedDB = async () => {
     await Component.deleteMany({});
     await RentalTransaction.deleteMany({});
     await Lecture.deleteMany({});
+    await WalletTransaction.deleteMany({});
+    await Lab.deleteMany({});
 
     // Create Admin, Teacher and Student
     const admin = new User({ name: 'Admin User', email: 'admin@lab.com', password: 'password123', role: 'admin' });
@@ -75,6 +79,28 @@ const seedDB = async () => {
       completedLectures: [lecture1._id, lecture2._id]
     });
     await daCandidate.save();
+
+    // Seed some initial wallet logs
+    const initialLog = new WalletTransaction({
+      userId: student._id,
+      updatedBy: admin._id,
+      amount: 500,
+      type: 'topup',
+      previousBalance: 0,
+      newBalance: 500,
+      description: 'Initial balance top-up by administrator'
+    });
+    await initialLog.save();
+
+    // Create a physical Lab mapping
+    const physicsLab = new Lab({
+      name: 'General Physics & Electronics Lab',
+      description: 'Main laboratory for elementary circuits and sensor integrations.',
+      manager: teacher._id,
+      assistants: [daCandidate._id],
+      components: [arduino?._id, breadboard?._id].filter(Boolean)
+    });
+    await physicsLab.save();
 
     console.log('Database seeded successfully!');
     process.exit(0);
